@@ -65,12 +65,11 @@ pub async fn sign_in(db: Data<Db>, body: Json<UserRequest>) -> Result<Json<Signi
 
 
     Ok(Json(SigninResponse { token }))
-
 }
 
-pub async fn me_handler(db: Data<Db>, claims: JwtClaims) {
-    let user_id = claims.0.sub;
+// pub async fn me_handler(db: Data<Db>, claims: JwtClaims) {
+//     let user_id = claims.0.sub;
     
-}
+// }
 
 
