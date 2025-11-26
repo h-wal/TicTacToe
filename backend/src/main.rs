@@ -1,4 +1,4 @@
-use actix_web::{App, HttpServer, web};
+use actix_web::{App, HttpServer, dev::ServiceRequest, web};
 use db::Db;
 
 use crate::routes::user::{create_user, me_handler, sign_in};
@@ -24,14 +24,4 @@ async fn main() {
     .run()
     .await;
 
-}
-
-
-async fn my_middleware(
-    req: ServiceRequest,
-    next: Next<impl MessageBody>,
-) -> Result<ServiceResponse<impl MessageBody>, Error> {
-    // pre-processing
-    next.call(req).await
-    // post-processing
 }
