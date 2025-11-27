@@ -1,7 +1,7 @@
 use actix_web::{App, HttpServer, dev::ServiceRequest, middleware::from_fn, web};
 use db::Db;
 
-use crate::{middleware::check_user, routes::{rooms::{create_room, get_rooms}, user::{create_user, me, sign_in}}};
+use crate::{middleware::check_user, routes::{rooms::{create_room, get_rooms}, user::{create_user, me, sign_in}}, ws::{ws_handler}};
 
 pub mod routes;
 pub mod middleware;
@@ -28,6 +28,7 @@ async fn main() {
                 .wrap(from_fn(check_user))
                 .route(web::get().to(get_rooms))
             )
+            .service(web::resource("/ws").route(web::get().to(ws_handler))) //written in http hander later upgraded to web socket connection
             .app_data(actix_web::web::Data::new(db.clone()))
 
     })
