@@ -1,5 +1,5 @@
 use actix_web::{
-    dev::Payload, error::ErrorUnauthorized, web, FromRequest, HttpRequest,
+    Error, FromRequest, HttpMessage, HttpRequest, body::MessageBody, dev::{Payload, ServiceRequest, ServiceResponse}, error::ErrorUnauthorized, middleware::Next, web
 };
 use jsonwebtoken::{decode, DecodingKey, Validation};
 use std::{env, future::Ready, future::ready};
@@ -34,4 +34,14 @@ impl FromRequest for JwtClaims {
         }
         ready(Err(ErrorUnauthorized("Authorization header missing or invalid")))
     }
+}
+
+
+pub async fn check_user(
+    mut req: ServiceRequest,
+    next: Next<impl MessageBody>, //it is something which implementws the Message Body 
+) -> Result<ServiceResponse<impl MessageBody>, Error> {
+    let claims = req.extract::<JwtClaims>().await.map_err(|_| ErrorUnauthorized("Invalid or missing token"))?;
+    req.extensions_mut().insert(claims.0); // store Claims so handlers can read them
+    next.call(req).await
 }
