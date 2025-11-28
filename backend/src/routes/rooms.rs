@@ -1,11 +1,11 @@
 use actix_web::web::{Data, Json};
-use db::{Db, models::room};
+use db::{Db};
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize)]
 pub struct CreateRoomRequestStruct {
-    pub roomSlug: String,
-    pub createdBy: String,
+    pub room_slug: String,
+    pub created_by: String,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -23,7 +23,7 @@ pub async fn create_room(
     body: Json<CreateRoomRequestStruct>,
 ) -> Result<Json<CreateRoomResponseStruct>, actix_web::error::Error> {
     let response = db
-        .create_room(&body.roomSlug, &body.createdBy)
+        .create_room(&body.room_slug, &body.created_by)
         .await
         .map_err(|e| actix_web::error::ErrorConflict(e.to_string()))?;
 
