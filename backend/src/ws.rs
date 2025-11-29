@@ -6,7 +6,7 @@ use snowflake::ProcessUniqueId;
 use std::collections::{HashMap, HashSet};
 use std::fmt::format;
 use std::sync::Arc;
-use tokio::sync::RwLock;
+use tokio::sync::{RwLock, broadcast, mpsc};
 
 pub type ClientId = ProcessUniqueId; //declaring types for websocket
 pub type RoomId = String;
@@ -16,6 +16,7 @@ pub struct ClientInfo {
     //this is a clientInfo struct representing the user along with its connected rooms and the tx (mpsc) sender (added later)
     pub id: ClientId,
     pub rooms: HashSet<RoomId>, //all the rooms the user is connected to 
+	pub tx: mpsc::UnboundedSender<String>
 }
 
 pub struct RoomManager {
@@ -35,10 +36,11 @@ impl RoomManager {
 
 	//Entering a new client
 	
-	pub fn register_client(&mut self, id: ClientId){
+	pub fn register_client(&mut self, id: ClientId, tx: mpsc::UnboundedSender<String>){
 		let info = ClientInfo{
 			id,
-			rooms: HashSet::new()
+			rooms: HashSet::new(),
+			tx
 		};
 		self.clients.insert(id, info);
 	}
@@ -137,15 +139,28 @@ pub async fn ws_handler(
     // stream is used to receive messages from the client
     // response is what will be sent to the client
 
-
+	let (tx, mut rx) = mpsc::unbounded_channel::<String>();
 	session.text("Welcome").await.unwrap();
 	 //send a welcome message to clinet , session.text is a future hence has to be awaited
 	let client_id = ProcessUniqueId::new();
 	let mut manager = state.manager.write().await; //taking write access from manager
-	manager.register_client(client_id);
+	manager.register_client(client_id, tx);
 	let manager_state = state.manager.clone();
 	let mut session_out = session.clone();
 
+	let mut session_write = session.clone();
+	let manager_state2 = manager_state.clone();
+
+	rt::spawn(async move {
+		while let Some(message) = rx.recv().await {
+			if session_write.text(message).await.is_err(){
+
+				let mut mgr = manager_state2.write().await;
+				mgr.unregister_client(client_id);
+				break;
+			}
+		} 
+	});
 
     rt::spawn(async move {
         while let Some(message) = stream.recv().await {
@@ -154,49 +169,9 @@ pub async fn ws_handler(
                     let _ = session.pong(&data).await;
                 }
                 Ok(Message::Text(message)) => {
-                    let _ = session.text(format!("echo from server {}", message)).await;
 
+					handle_incoming_message(&manager_state, client_id, &message, session.clone()).await;
 					println!("Rcvd {} , {} from client ", client_id, message);
-
-					match serde_json::from_str::<ClientAction>(&message){
-						Ok(ClientAction::JoinRoom { room }) => {
-							println!("client {} requested to join room {}", client_id, room);
-
-							let mut manager = manager_state.write().await;
-							manager.join_room(client_id, room.clone());
-
-							let _ = session.text(
-								format!("{{\"status\": \"joined\", \"room\": \"{}\"}}", room)
-							).await;
-						}
-
-						Ok(ClientAction::LeaveRoom { room }) => {
-							println!("client {} requested to leave room {}", client_id, room);
-
-							let mut manager = manager_state.write().await;
-							manager.leave_room(client_id, &room);
-
-							let _ = session.text(
-								format!("{{\"status\": \"left\", \"room\": \"{}\"}}", room)
-							).await;
-						}
-
-						Ok(ClientAction::Chat { room, message }) => {
-							println!("client {} requested to send {} in room {}", client_id,message, room);
-
-
-
-							let _ = session.text(
-								format!("{{\"status\": \"send\", \"room\": \"{}\"}}", room)
-							).await;
-						}
-
-						Err(e) => {
-							let _ = session.text(
-								format!("{{\"error\": \"invalid_json\", \"details\": \"{}\"}}", e)
-							).await;
-						}
-					}
                 }
 				Ok(Message::Close(reason)) => {
 					eprintln!("Clinet {:?} disconnected {:?}", client_id, reason);
@@ -215,6 +190,79 @@ pub async fn ws_handler(
     });
 
     Ok(response)
+}
+
+async fn handle_incoming_message(
+	manager_state: &Arc<RwLock<RoomManager>>,
+	client_id: ProcessUniqueId,
+	message: &str,
+	mut session: actix_ws::Session,
+
+){
+	match serde_json::from_str::<ClientAction>(&message){
+		Ok(ClientAction::JoinRoom { room }) => {
+			println!("client {} requested to join room {}", client_id, room);
+
+			let mut manager = manager_state.write().await;
+			manager.join_room(client_id, room.clone());
+
+			let _ = session.text(
+				format!("{{\"status\": \"joined\", \"room\": \"{}\"}}", room)
+			).await;
+		}
+
+		Ok(ClientAction::LeaveRoom { room }) => {
+			println!("client {} requested to leave room {}", client_id, room);
+
+			let mut manager = manager_state.write().await;
+			manager.leave_room(client_id, &room);
+
+			let _ = session.text(
+				format!("{{\"status\": \"left\", \"room\": \"{}\"}}", room)
+			).await;
+		}
+
+		Ok(ClientAction::Chat { room, message }) => {
+			println!("client {} requested to send {} in room {}", client_id,message, room);
+
+
+			broadcast_to_room(
+				&manager_state,
+				&room, 
+				&client_id,
+				&format!("{{\"chat\": \"{}\"}}", message),
+			).await;
+
+			let _ = session.text(
+				format!("{{\"status\": \"sent message {} \", \"room\": \"{}\"}}",message, room)
+			).await;
+		}
+
+		Err(e) => {
+			let _ = session.text(
+				format!("{{\"error\": \"invalid_json\", \"details\": \"{}\"}}", e)
+			).await;
+		}
+	}
+}
+
+async fn broadcast_to_room(
+	manager_state: &Arc<RwLock<RoomManager>>,
+	room_id: &str,
+	sent_by_client: &ProcessUniqueId,
+	message: &str
+) {
+	let manager = manager_state.read().await;
+
+	if let Some(clients) = manager.rooms.get(room_id){
+		for client_id in clients{
+			if let Some(client_info) =  manager.clients.get(client_id){
+				//send a message to the client
+				let _ = client_info.tx.send(message.to_string());
+				println!("Send message: {:?} to client {} from {}", message, client_id, sent_by_client)
+			}
+		}
+	}
 }
 
 #[actix_web::main]
