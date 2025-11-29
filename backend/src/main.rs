@@ -18,9 +18,10 @@ pub mod ws;
 async fn main() {
     dotenvy::dotenv().unwrap();
     let db = Db::new().await.unwrap();
+    let app_state = actix_web::web::Data::new(crate::ws::AppState::new());
     let _ = HttpServer::new(move || {
         App::new()
-            .app_data(actix_web::web::Data::new(crate::ws::AppState::new()))
+            .app_data(app_state.clone()) //websocket room manager state (global state holdng all the clients, thier tx, rooms , etc)
             .app_data(actix_web::web::Data::new(db.clone()))
             .service(web::resource("/signup").route(web::post().to(create_user)))
             .service(web::resource("/signin").route(web::post().to(sign_in)))
@@ -39,7 +40,9 @@ async fn main() {
                     .wrap(from_fn(check_user))
                     .route(web::get().to(get_rooms)),
             )
-            .service(web::resource("/ws").route(web::get().to(ws_handler))) //written in http hander later upgraded to web socket connection
+            .service(
+                web::resource("/ws")
+                    .route(web::get().to(ws_handler))) //written in http hander later upgraded to web socket connection
     })
     .bind("0.0.0.0:3000")
     .unwrap()

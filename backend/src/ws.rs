@@ -139,12 +139,14 @@ pub async fn ws_handler(
     // stream is used to receive messages from the client
     // response is what will be sent to the client
 
-	let (tx, mut rx) = mpsc::unbounded_channel::<String>();
-	session.text("Welcome").await.unwrap();
+	let (tx, mut rx) = mpsc::unbounded_channel::<String>(); //making a mpsc channel to talk to send and rcv messages to and from the client
+	session.text("Welcome").await.unwrap(); //send a confimation message back
 	 //send a welcome message to clinet , session.text is a future hence has to be awaited
-	let client_id = ProcessUniqueId::new();
+	let client_id = ProcessUniqueId::new(); //creating a new process id to identify the client
+	
 	let mut manager = state.manager.write().await; //taking write access from manager
 	manager.register_client(client_id, tx);
+	
 	let manager_state = state.manager.clone();
 	let mut session_out = session.clone();
 
